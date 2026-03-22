@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: "Atoms – Build Your Ideas with Agents",
   description:
     "AI agent-powered app generator. Describe what you want to build, and Atoms builds it for you in seconds.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
