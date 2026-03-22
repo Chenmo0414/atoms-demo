@@ -30,7 +30,7 @@ export function useRace(
   const abortRef = useRef<AbortController | null>(null);
   const promptRef = useRef("");
 
-  const race = useCallback(async (projectId: string, prompt: string) => {
+  const race = useCallback(async (projectId: string, prompt: string, modelId?: string) => {
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
     promptRef.current = prompt;
@@ -47,7 +47,7 @@ export function useRace(
       const res = await fetch("/api/race", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, prompt }),
+        body: JSON.stringify({ projectId, prompt, modelId }),
         signal: abortRef.current.signal,
       });
 

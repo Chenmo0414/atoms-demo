@@ -14,11 +14,13 @@ import { AppViewer } from "@/components/workspace/AppViewer";
 import { CodeViewer } from "@/components/workspace/CodeViewer";
 import { VersionHistory } from "@/components/workspace/VersionHistory";
 import { RaceMode } from "@/components/workspace/RaceMode";
+import { ModelSelector } from "@/components/workspace/ModelSelector";
 import { useGenerate } from "@/hooks/useGenerate";
 import { useRace } from "@/hooks/useRace";
 import { Message, Project, Version } from "@/types";
 import { LoadingDots } from "@/components/shared/LoadingDots";
 import { extractHTML } from "@/lib/extractCode";
+import { resolveModel } from "@/lib/models";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -47,6 +49,9 @@ export default function WorkspacePage() {
   const [publishing, setPublishing] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState<string>(
+    () => resolveModel().id
+  );
 
   // Split pane
   const [splitPos, setSplitPos] = useState(40); // percentage
@@ -122,12 +127,12 @@ export default function WorkspacePage() {
       setMessages((prev) => [...prev, tempMsg]);
 
       if (mode === "race") {
-        race(projectId, prompt);
+        race(projectId, prompt, selectedModelId);
       } else {
-        generate(projectId, prompt);
+        generate(projectId, prompt, selectedModelId);
       }
     },
-    [mode, projectId, generate, race]
+    [mode, projectId, generate, race, selectedModelId]
   );
 
   // Refresh messages after generation
@@ -310,6 +315,12 @@ export default function WorkspacePage() {
             Race
           </button>
         </div>
+
+        <ModelSelector
+          value={selectedModelId}
+          onChange={setSelectedModelId}
+          disabled={isGenerating}
+        />
 
         <div className="flex items-center gap-1.5">
           <button

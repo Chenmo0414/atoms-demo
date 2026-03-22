@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { projectId, prompt } = await req.json();
+  const { projectId, prompt, modelId } = await req.json();
 
   if (!projectId || !prompt) {
     return new Response(JSON.stringify({ error: "Missing projectId or prompt" }), {
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const claudeStream = await generateAppStream(prompt, history);
+        const claudeStream = await generateAppStream(prompt, history, modelId);
 
         for await (const chunk of claudeStream) {
           if (

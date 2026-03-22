@@ -27,7 +27,7 @@ export function useGenerate(
   const bufferRef = useRef("");
 
   const generate = useCallback(
-    async (projectId: string, prompt: string) => {
+    async (projectId: string, prompt: string, modelId?: string) => {
       if (abortRef.current) {
         abortRef.current.abort();
       }
@@ -48,7 +48,7 @@ export function useGenerate(
         const res = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, prompt }),
+          body: JSON.stringify({ projectId, prompt, modelId }),
           signal: abortRef.current.signal,
         });
 

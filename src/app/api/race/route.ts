@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { projectId, prompt } = await req.json();
+  const { projectId, prompt, modelId } = await req.json();
 
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project || project.userId !== session.user.id) {
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
             ? `${prompt} (try a different visual style and layout approach)`
             : prompt;
 
-          const claudeStream = await generateAppStream(nudgedPrompt, []);
+          const claudeStream = await generateAppStream(nudgedPrompt, [], modelId);
 
           for await (const chunk of claudeStream) {
             if (

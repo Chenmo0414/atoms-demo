@@ -1,4 +1,18 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { resolveModel, type ModelInfo } from "./models";
+
+// ─── Shared types ─────────────────────────────────────────────────────────────
+
+export type HistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type StreamChunk = {
+  type: "content_block_delta";
+  delta: { type: "text_delta"; text: string };
+};
+
+// ─── System prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are Atoms, an AI agent that generates complete, self-contained web applications.
 
@@ -29,30 +43,209 @@ function buildUserMessage(prompt: string): string {
 Remember: output ONLY a single self-contained HTML file inside a \`\`\`html code block. No other text.`;
 }
 
-export async function generateAppStream(
-  prompt: string,
-  history: { role: "user" | "assistant"; content: string }[]
-) {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+// ─── OpenAI-compatible streaming (OpenAI + Bailian/DashScope) ─────────────────
 
-  // Build messages array with history + new prompt
-  const messages: Anthropic.MessageParam[] = [
-    ...history.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
-    {
-      role: "user" as const,
-      content: buildUserMessage(prompt),
-    },
+async function* streamOpenAICompatible(
+  prompt: string,
+  history: HistoryMessage[],
+  info: ModelInfo
+): AsyncGenerator<StreamChunk> {
+  let apiKey: string;
+  let baseUrl: string;
+
+  if (info.provider === "openai") {
+    apiKey = process.env.OPENAI_API_KEY || "";
+    baseUrl =
+      process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  } else {
+    // bailian / DashScope
+    apiKey =
+      process.env.DASHSCOPE_API_KEY ||
+      process.env.BAILIAN_API_KEY ||
+      "";
+    baseUrl =
+      process.env.DASHSCOPE_BASE_URL ||
+      process.env.BAILIAN_BASE_URL ||
+      "https://dashscope.aliyuncs.com/compatible-mode/v1";
+  }
+
+  if (!apiKey) {
+    throw new Error(
+      info.provider === "openai"
+        ? "Missing OPENAI_API_KEY"
+        : "Missing DASHSCOPE_API_KEY (or BAILIAN_API_KEY)"
+    );
+  }
+
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: buildUserMessage(prompt) },
   ];
 
-  return client.messages.stream({
-    model: "claude-sonnet-4-6",
-    max_tokens: 8096,
-    system: SYSTEM_PROMPT,
+  const body: Record<string, unknown> = {
+    model: info.model,
+    stream: true,
+    temperature: 0.7,
+    max_tokens: 8192,
     messages,
+  };
+
+  // Bailian-specific: disable thinking tokens to keep output clean
+  if (info.provider === "bailian") {
+    body.extra_body = { enable_thinking: false };
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
   });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${info.provider} API error ${response.status}: ${text}`);
+  }
+
+  if (!response.body) throw new Error("Empty response body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+
+    for (const event of events) {
+      for (const line of event.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          continue;
+        }
+
+        const choices = parsed?.choices as Array<{ delta?: { content?: string } }>;
+        const text = choices?.[0]?.delta?.content;
+        if (typeof text === "string" && text.length > 0) {
+          yield { type: "content_block_delta", delta: { type: "text_delta", text } };
+        }
+      }
+    }
+  }
+}
+
+// ─── Anthropic streaming (direct HTTP, no SDK) ────────────────────────────────
+
+async function* streamAnthropic(
+  prompt: string,
+  history: HistoryMessage[],
+  info: ModelInfo
+): AsyncGenerator<StreamChunk> {
+  const apiKey = process.env.ANTHROPIC_API_KEY || "";
+  if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
+
+  const baseUrl =
+    process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+
+  const messages = [
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: buildUserMessage(prompt) },
+  ];
+
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: info.model,
+      max_tokens: 8096,
+      stream: true,
+      system: SYSTEM_PROMPT,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Anthropic API error ${response.status}: ${text}`);
+  }
+
+  if (!response.body) throw new Error("Empty response body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+
+    for (const event of events) {
+      // Anthropic SSE: "event: <type>\ndata: <json>"
+      let eventType = "";
+      let dataLine = "";
+
+      for (const line of event.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLine = line.slice(5).trim();
+        }
+      }
+
+      if (eventType !== "content_block_delta" || !dataLine) continue;
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(dataLine);
+      } catch {
+        continue;
+      }
+
+      const delta = parsed?.delta as { type?: string; text?: string };
+      if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
+        yield { type: "content_block_delta", delta: { type: "text_delta", text: delta.text } };
+      }
+    }
+  }
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Generate an app stream using the specified model (or env default).
+ * Returns an AsyncGenerator yielding StreamChunk objects.
+ */
+export async function generateAppStream(
+  prompt: string,
+  history: HistoryMessage[],
+  modelId?: string | null
+): Promise<AsyncGenerator<StreamChunk>> {
+  const info = resolveModel(modelId);
+
+  if (info.provider === "anthropic") {
+    return streamAnthropic(prompt, history, info);
+  } else {
+    return streamOpenAICompatible(prompt, history, info);
+  }
 }
