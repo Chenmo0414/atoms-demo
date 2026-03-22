@@ -50,11 +50,8 @@ export async function POST(req: NextRequest) {
           const claudeStream = await generateAppStream(nudgedPrompt, [], modelId);
 
           for await (const chunk of claudeStream) {
-            if (
-              chunk.type === "content_block_delta" &&
-              chunk.delta.type === "text_delta"
-            ) {
-              const text = chunk.delta.text;
+            if (chunk.type === "content") {
+              const text = chunk.text;
               fullContents[slot] += text;
               send({ type: "delta", slot, content: text });
             }

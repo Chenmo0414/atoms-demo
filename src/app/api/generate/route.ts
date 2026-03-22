@@ -3,6 +3,11 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { generateAppStream } from "@/lib/claude";
 import { extractHTML } from "@/lib/extractCode";
+import {
+  parseAssistantMessage,
+  serializeAssistantMessage,
+} from "@/lib/assistantMessage";
+import { writeVersionFiles } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -16,7 +21,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { projectId, prompt, modelId } = await req.json();
+  const { projectId, prompt, modelId, confirmedRequirements, resumeFrom } = await req.json();
 
   if (!projectId || !prompt) {
     return new Response(JSON.stringify({ error: "Missing projectId or prompt" }), {
@@ -42,7 +47,10 @@ export async function POST(req: NextRequest) {
 
   let history = allMessages.map((m) => ({
     role: m.role as "user" | "assistant",
-    content: m.content,
+    content:
+      m.role === "assistant"
+        ? parseAssistantMessage(m.content).response
+        : m.content,
   }));
 
   if (history.length > 10) {
@@ -51,6 +59,34 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder();
   let fullContent = "";
+  let reasoningContent = "";
+  const normalizedRequirements = Array.isArray(confirmedRequirements)
+    ? confirmedRequirements
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+  const basePrompt =
+    normalizedRequirements.length > 0
+      ? `${prompt}\n\nConfirmed requirements:\n${normalizedRequirements
+          .map((item) => `- ${item}`)
+          .join("\n")}\n\nImplement all confirmed requirements in the app.`
+      : prompt;
+
+  const generationPrompt = resumeFrom
+    ? `${basePrompt}\n\nNote: A previous generation was interrupted. Here is the partial output:\n\`\`\`\n${String(resumeFrom).slice(0, 4000)}\n\`\`\`\nBuild on this and return a complete, fully working app.`
+    : basePrompt;
+
+  // Create a generation task to survive page refreshes
+  const task = await prisma.generationTask.create({
+    data: {
+      projectId,
+      prompt,
+      modelId: modelId ?? null,
+      confirmedRequirements: normalizedRequirements.length > 0 ? normalizedRequirements : undefined,
+      status: "PENDING",
+    },
+  });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -58,15 +94,22 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
+      // Mark task as running
+      await prisma.generationTask.update({
+        where: { id: task.id },
+        data: { status: "RUNNING" },
+      });
+
       try {
-        const claudeStream = await generateAppStream(prompt, history, modelId);
+        const claudeStream = await generateAppStream(generationPrompt, history, modelId);
 
         for await (const chunk of claudeStream) {
-          if (
-            chunk.type === "content_block_delta" &&
-            chunk.delta.type === "text_delta"
-          ) {
-            const text = chunk.delta.text;
+          if (chunk.type === "reasoning") {
+            const text = chunk.text;
+            reasoningContent += text;
+            send({ type: "reasoning", content: text });
+          } else if (chunk.type === "content") {
+            const text = chunk.text;
             fullContent += text;
             send({ type: "delta", content: text });
           }
@@ -101,7 +144,11 @@ export async function POST(req: NextRequest) {
         await prisma.message.createMany({
           data: [
             { projectId, role: "user", content: prompt },
-            { projectId, role: "assistant", content: fullContent },
+            {
+              projectId,
+              role: "assistant",
+              content: serializeAssistantMessage(reasoningContent, fullContent),
+            },
           ],
         });
 
@@ -110,9 +157,24 @@ export async function POST(req: NextRequest) {
           data: { updatedAt: new Date() },
         });
 
+        // Mark task as done
+        await prisma.generationTask.update({
+          where: { id: task.id },
+          data: { status: "DONE", versionId: version.id },
+        });
+
+        // Write files to workspace (non-blocking — don't fail generation if disk write fails)
+        writeVersionFiles(session.user!.email, projectId, nextNum, html).catch((err) =>
+          console.error("[workspace] write failed:", err)
+        );
+
         send({ type: "done", html, versionId: version.id, versionNum: nextNum });
       } catch (error) {
         console.error("Generation error:", error);
+        await prisma.generationTask.update({
+          where: { id: task.id },
+          data: { status: "FAILED", error: error instanceof Error ? error.message : "Unknown error" },
+        }).catch(() => {}); // don't fail the response if this update fails
         send({ type: "error", message: "Generation failed" });
       } finally {
         controller.close();

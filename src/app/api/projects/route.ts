@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { z } from "zod";
+import { summarizeProjectTitle } from "@/lib/projectTitle";
 
 export async function GET() {
   const session = await getSession();
@@ -27,16 +28,22 @@ export async function POST(req: NextRequest) {
   const session = await getSession();
   if (!session.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const schema = z.object({
-    title: z.string().min(1).max(100),
-    description: z.string().optional(),
-  });
+  const schema = z
+    .object({
+      title: z.string().trim().min(1).max(100).optional(),
+      prompt: z.string().trim().min(1).max(5000).optional(),
+      description: z.string().optional(),
+    })
+    .refine((data) => !!data.title || !!data.prompt, {
+      message: "Either title or prompt is required",
+    });
 
   const body = await req.json();
-  const { title, description } = schema.parse(body);
+  const { title, prompt, description } = schema.parse(body);
+  const resolvedTitle = (title && title.trim()) || summarizeProjectTitle(prompt || "");
 
   const project = await prisma.project.create({
-    data: { title, description, userId: session.user.id },
+    data: { title: resolvedTitle, description, userId: session.user.id },
   });
 
   return NextResponse.json({ project }, { status: 201 });

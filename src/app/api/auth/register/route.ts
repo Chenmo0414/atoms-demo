@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { initUserWorkspace } from "@/lib/workspace";
 import { z } from "zod";
 
 const schema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   name: z.string().optional(),
-  remixSlug: z.string().optional(),
+  remixSlug: z.string().nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -28,6 +29,9 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.create({
       data: { email, passwordHash, name: name || null },
     });
+
+    // Initialize workspace for the new user
+    await initUserWorkspace(user.id, user.email);
 
     const session = await getSession();
     session.user = { id: user.id, email: user.email, name: user.name };
@@ -69,6 +73,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
     }
     console.error("Register error:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    const detail =
+      process.env.NODE_ENV !== "production" && error instanceof Error
+        ? error.message
+        : undefined;
+    return NextResponse.json({ error: "Server error", detail }, { status: 500 });
   }
 }

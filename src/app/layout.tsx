@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
+import { LangProvider } from "@/contexts/LangContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 export const metadata: Metadata = {
   title: "Atoms – Build Your Ideas with Agents",
@@ -14,10 +16,22 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="zh">
+      <head>
+        {/* Inline script to apply saved theme before first paint, avoiding flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var m=localStorage.getItem('theme-mode');var dark=(m==='dark')||(m!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(dark)document.documentElement.classList.add('dark');})()`,
+          }}
+        />
+      </head>
       <body style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
-        {children}
-        <Toaster position="bottom-right" theme="dark" richColors />
+        <ThemeProvider>
+          <LangProvider>
+            {children}
+            <Toaster position="bottom-right" richColors />
+          </LangProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

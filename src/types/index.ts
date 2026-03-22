@@ -37,4 +37,26 @@ export interface Message {
   createdAt: string;
 }
 
-export type GenerationMode = "engineer" | "race";
+export interface PlanItem {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface PlanResult {
+  summary: string;
+  items: PlanItem[];
+}
+
+export type GenerationMode = "engineer" | "plan" | "race";
+
+export interface ProcessRecord {
+  prompt: string;
+  plan: {
+    summary: string;
+    items: Array<{ id: string; label: string; description: string; checked: boolean }>;
+  } | null;
+  status: "planning" | "confirming" | "generating" | "done" | "error";
+  versionNum?: number;
+  isRace?: boolean;
+}

@@ -7,9 +7,20 @@ export type HistoryMessage = {
   content: string;
 };
 
+export type PlanItem = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+export type PlanResult = {
+  summary: string;
+  items: PlanItem[];
+};
+
 type StreamChunk = {
-  type: "content_block_delta";
-  delta: { type: "text_delta"; text: string };
+  type: "content" | "reasoning";
+  text: string;
 };
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -37,10 +48,103 @@ QUALITY STANDARDS:
 
 When iterating on an existing app, preserve the existing functionality. Only modify what the user asks to change. Re-output the COMPLETE updated HTML file.`;
 
+const PLAN_SYSTEM_PROMPT = `You are Atoms Planner. Convert the user request into a short, implementation-ready checklist.
+
+Return strict JSON only, no markdown:
+{
+  "summary": "one sentence summary",
+  "items": [
+    {
+      "id": "req-1",
+      "label": "short requirement title",
+      "description": "one sentence detail"
+    }
+  ]
+}
+
+Rules:
+- 3-8 items
+- Focus on user-visible outcomes and core interactions
+- Keep wording clear and concise
+- Do not include backend/devops work unless user asked for it
+- IDs must be unique and stable in format req-N`;
+
 function buildUserMessage(prompt: string): string {
   return `Build the following: ${prompt}
 
 Remember: output ONLY a single self-contained HTML file inside a \`\`\`html code block. No other text.`;
+}
+
+function buildPlanUserMessage(prompt: string): string {
+  return `User request: ${prompt}
+
+Generate the checklist JSON now.`;
+}
+
+function extractJsonObject(text: string): string {
+  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1];
+
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1);
+  }
+
+  return text;
+}
+
+function normalizePlanResult(rawText: string, prompt: string): PlanResult {
+  try {
+    const jsonText = extractJsonObject(rawText);
+    const parsed = JSON.parse(jsonText) as {
+      summary?: unknown;
+      items?: Array<{ id?: unknown; label?: unknown; description?: unknown }>;
+    };
+
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+          .map((item, index) => {
+            const label = typeof item.label === "string" ? item.label.trim() : "";
+            const description =
+              typeof item.description === "string" ? item.description.trim() : "";
+            if (!label) return null;
+            return {
+              id:
+                typeof item.id === "string" && item.id.trim()
+                  ? item.id.trim()
+                  : `req-${index + 1}`,
+              label,
+              description: description || "Implement this requirement in the generated app.",
+            } as PlanItem;
+          })
+          .filter((item): item is PlanItem => item !== null)
+          .slice(0, 8)
+      : [];
+
+    if (items.length > 0) {
+      return {
+        summary:
+          typeof parsed.summary === "string" && parsed.summary.trim()
+            ? parsed.summary.trim()
+            : `Implementation plan for: ${prompt}`,
+        items,
+      };
+    }
+  } catch {
+    // fallback below
+  }
+
+  return {
+    summary: `Implementation plan for: ${prompt}`,
+    items: [
+      {
+        id: "req-1",
+        label: prompt.trim() || "Build the requested app",
+        description: "Use this as the primary requirement for generation.",
+      },
+    ],
+  };
 }
 
 // ─── OpenAI-compatible streaming (OpenAI + Bailian/DashScope) ─────────────────
@@ -91,9 +195,9 @@ async function* streamOpenAICompatible(
     messages,
   };
 
-  // Bailian-specific: disable thinking tokens to keep output clean
+  // Bailian-specific: allow thinking tokens so the UI can show them live
   if (info.provider === "bailian") {
-    body.extra_body = { enable_thinking: false };
+    body.extra_body = { enable_thinking: true };
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -137,10 +241,24 @@ async function* streamOpenAICompatible(
           continue;
         }
 
-        const choices = parsed?.choices as Array<{ delta?: { content?: string } }>;
-        const text = choices?.[0]?.delta?.content;
-        if (typeof text === "string" && text.length > 0) {
-          yield { type: "content_block_delta", delta: { type: "text_delta", text } };
+        const choice = (parsed?.choices as Array<{
+          delta?: {
+            content?: string;
+            reasoning?: string;
+            reasoning_content?: string;
+          };
+        }>)?.[0];
+
+        const contentText = choice?.delta?.content;
+        const reasoningText =
+          choice?.delta?.reasoning_content ?? choice?.delta?.reasoning;
+
+        if (typeof reasoningText === "string" && reasoningText.length > 0) {
+          yield { type: "reasoning", text: reasoningText };
+        }
+
+        if (typeof contentText === "string" && contentText.length > 0) {
+          yield { type: "content", text: contentText };
         }
       }
     }
@@ -222,9 +340,26 @@ async function* streamAnthropic(
         continue;
       }
 
-      const delta = parsed?.delta as { type?: string; text?: string };
-      if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text.length > 0) {
-        yield { type: "content_block_delta", delta: { type: "text_delta", text: delta.text } };
+      const delta = parsed?.delta as {
+        type?: string;
+        text?: string;
+        thinking?: string;
+      };
+
+      if (
+        delta?.type === "thinking_delta" &&
+        typeof delta.thinking === "string" &&
+        delta.thinking.length > 0
+      ) {
+        yield { type: "reasoning", text: delta.thinking };
+      }
+
+      if (
+        delta?.type === "text_delta" &&
+        typeof delta.text === "string" &&
+        delta.text.length > 0
+      ) {
+        yield { type: "content", text: delta.text };
       }
     }
   }
@@ -248,4 +383,124 @@ export async function generateAppStream(
   } else {
     return streamOpenAICompatible(prompt, history, info);
   }
+}
+
+async function generatePlanWithOpenAICompatible(
+  prompt: string,
+  history: HistoryMessage[],
+  info: ModelInfo
+): Promise<PlanResult> {
+  let apiKey: string;
+  let baseUrl: string;
+
+  if (info.provider === "openai") {
+    apiKey = process.env.OPENAI_API_KEY || "";
+    baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+  } else {
+    apiKey = process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || "";
+    baseUrl =
+      process.env.DASHSCOPE_BASE_URL ||
+      process.env.BAILIAN_BASE_URL ||
+      "https://dashscope.aliyuncs.com/compatible-mode/v1";
+  }
+
+  if (!apiKey) {
+    throw new Error(
+      info.provider === "openai"
+        ? "Missing OPENAI_API_KEY"
+        : "Missing DASHSCOPE_API_KEY (or BAILIAN_API_KEY)"
+    );
+  }
+
+  const messages = [
+    { role: "system", content: PLAN_SYSTEM_PROMPT },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: buildPlanUserMessage(prompt) },
+  ];
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: info.model,
+      stream: false,
+      temperature: 0.2,
+      max_tokens: 1200,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${info.provider} API error ${response.status}: ${text}`);
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  const content = data.choices?.[0]?.message?.content ?? "";
+  return normalizePlanResult(content, prompt);
+}
+
+async function generatePlanWithAnthropic(
+  prompt: string,
+  history: HistoryMessage[],
+  info: ModelInfo
+): Promise<PlanResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY || "";
+  if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
+
+  const baseUrl = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+
+  const messages = [
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: buildPlanUserMessage(prompt) },
+  ];
+
+  const response = await fetch(`${baseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: info.model,
+      max_tokens: 1200,
+      stream: false,
+      system: PLAN_SYSTEM_PROMPT,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Anthropic API error ${response.status}: ${text}`);
+  }
+
+  const data = (await response.json()) as {
+    content?: Array<{ type?: string; text?: string }>;
+  };
+  const text = (data.content || [])
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => item.text as string)
+    .join("\n");
+
+  return normalizePlanResult(text, prompt);
+}
+
+export async function generatePlan(
+  prompt: string,
+  history: HistoryMessage[],
+  modelId?: string | null
+): Promise<PlanResult> {
+  const info = resolveModel(modelId);
+  if (info.provider === "anthropic") {
+    return generatePlanWithAnthropic(prompt, history, info);
+  }
+  return generatePlanWithOpenAICompatible(prompt, history, info);
 }

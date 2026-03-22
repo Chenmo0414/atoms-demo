@@ -3,32 +3,65 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String?
-  createdAt    DateTime  @default(now())
-  projects     Project[]
+  id                   String            @id @default(cuid())
+  email                String            @unique
+  passwordHash         String
+  name                 String?
+  createdAt            DateTime          @default(now())
+  projects             Project[]
+  workspace            Workspace?
+  workspaceMemberships WorkspaceMember[]
+}
+
+model Workspace {
+  id        String            @id @default(cuid())
+  name      String
+  slug      String            @unique  // derived from email, e.g. user_at_example_com
+  ownerId   String            @unique  // one workspace per user
+  owner     User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  diskPath  String            // workspaces/{slug}/
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
+enum WorkspaceRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(VIEWER)
+  invitedAt   DateTime      @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
 }
 
 model Project {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  slug        String?   @unique
-  isPublished Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  versions    Version[]
-  messages    Message[]
+  id               String           @id @default(cuid())
+  title            String
+  description      String?
+  userId           String
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug             String?          @unique
+  isPublished      Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  versions         Version[]
+  messages         Message[]
+  generationTasks  GenerationTask[]
 
   @@index([userId])
 }
@@ -62,4 +95,28 @@ model Message {
 enum Role {
   user
   assistant
+}
+
+enum GenerationStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model GenerationTask {
+  id                    String           @id @default(cuid())
+  projectId             String
+  project               Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  prompt                String
+  modelId               String?
+  confirmedRequirements Json?
+  status                GenerationStatus @default(PENDING)
+  error                 String?
+  versionId             String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  @@index([projectId])
+  @@index([status])
 }

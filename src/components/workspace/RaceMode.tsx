@@ -4,6 +4,7 @@ import { Trophy, Zap } from "lucide-react";
 import { AppViewer } from "./AppViewer";
 import { RaceSlot } from "@/hooks/useRace";
 import { LoadingDots } from "@/components/shared/LoadingDots";
+import { useT } from "@/contexts/LangContext";
 
 interface RaceModeProps {
   slots: [RaceSlot, RaceSlot];
@@ -22,13 +23,14 @@ function SlotPanel({
   isRacing: boolean;
   onPickWinner: (slot: 0 | 1) => void;
 }) {
-  const label = index === 0 ? "Agent A" : "Agent B";
+  const t = useT();
+  const label = index === 0 ? t.agentA : t.agentB;
   const color = index === 0 ? "purple" : "blue";
 
   return (
-    <div className="flex flex-col h-full border border-zinc-800 rounded-xl overflow-hidden">
+    <div className="flex flex-col h-full border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden">
       {/* Header */}
-      <div className={`flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800`}>
+      <div className="flex items-center justify-between px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <div
             className={`w-2 h-2 rounded-full ${
@@ -41,7 +43,7 @@ function SlotPanel({
                 : "bg-zinc-600"
             }`}
           />
-          <span className="text-xs font-medium text-zinc-300">{label}</span>
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-300">{label}</span>
           {slot.status === "streaming" && <LoadingDots />}
         </div>
         {slot.status === "done" && slot.html && (
@@ -54,13 +56,13 @@ function SlotPanel({
             }`}
           >
             <Trophy className="w-3 h-3" />
-            Pick Winner
+            {t.pickWinner}
           </button>
         )}
       </div>
 
       {/* Preview */}
-      <div className="flex-1 bg-zinc-950">
+      <div className="flex-1 bg-white dark:bg-zinc-950">
         <AppViewer
           html={slot.html || ""}
           streaming={slot.status === "streaming"}
@@ -71,21 +73,20 @@ function SlotPanel({
 }
 
 export function RaceMode({ slots, isRacing, onPickWinner }: RaceModeProps) {
+  const t = useT();
   const bothDone = slots[0].status === "done" && slots[1].status === "done";
 
   return (
     <div className="flex flex-col h-full">
       {/* Race header */}
-      <div className="flex items-center justify-center gap-2 py-2 border-b border-zinc-800 bg-zinc-950">
-        <Zap className="w-4 h-4 text-yellow-400" />
-        <span className="text-sm font-medium text-white">Race Mode</span>
+      <div className="flex items-center justify-center gap-2 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+        <Zap className="w-4 h-4 text-yellow-500 dark:text-yellow-400" />
+        <span className="text-sm font-medium text-zinc-900 dark:text-white">{t.raceModeTitle}</span>
         {isRacing && (
-          <span className="text-xs text-zinc-500">
-            — two agents competing simultaneously
-          </span>
+          <span className="text-xs text-zinc-500">{t.twoAgentsCompeting}</span>
         )}
         {bothDone && (
-          <span className="text-xs text-green-400">— pick the winner!</span>
+          <span className="text-xs text-green-600 dark:text-green-400">{t.pickTheWinner}</span>
         )}
       </div>
 

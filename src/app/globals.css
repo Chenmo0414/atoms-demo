@@ -78,3 +78,47 @@
   animation: blink 1s step-end infinite;
   color: hsl(var(--primary));
 }
+
+/* Subtle enter animations for chat/workflow/preview updates */
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-message-in {
+  animation: fade-slide-up 260ms ease-out both;
+}
+
+.animate-workflow-in {
+  animation: fade-slide-up 300ms ease-out both;
+}
+
+.animate-preview-in {
+  animation: fade-in 280ms ease-out both;
+}
+
+/* Smooth but short theme transition when toggling */
+html.theme-transition body,
+html.theme-transition body *,
+html.theme-transition button,
+html.theme-transition input,
+html.theme-transition textarea {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-duration: 220ms;
+  transition-timing-function: ease;
+}

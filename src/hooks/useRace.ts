@@ -20,7 +20,8 @@ const initialSlot = (): RaceSlot => ({
 });
 
 export function useRace(
-  onWinnerPicked?: (html: string, prompt: string) => void
+  onWinnerPicked?: (html: string, prompt: string) => void,
+  messages?: { raceWinnerLabel: (agent: string) => string }
 ) {
   const [state, setState] = useState<RaceState>({
     isRacing: false,
@@ -119,7 +120,7 @@ export function useRace(
         body: JSON.stringify({
           html,
           prompt: promptRef.current,
-          label: `Race winner (Agent ${slot === 0 ? "A" : "B"})`,
+          label: messages?.raceWinnerLabel(slot === 0 ? "A" : "B") ?? `Race winner (Agent ${slot === 0 ? "A" : "B"})`,
         }),
       });
 

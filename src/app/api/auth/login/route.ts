@@ -36,6 +36,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.errors[0].message }, { status: 400 });
     }
     console.error("Login error:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    const detail =
+      process.env.NODE_ENV !== "production" && error instanceof Error
+        ? error.message
+        : undefined;
+    return NextResponse.json({ error: "Server error", detail }, { status: 500 });
   }
 }
