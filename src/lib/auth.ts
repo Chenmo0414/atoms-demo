@@ -14,7 +14,9 @@ export const sessionOptions = {
   cookieName: "atoms_session",
   password: process.env.SESSION_SECRET as string,
   cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
+    // Allow HTTP when NEXT_PUBLIC_APP_URL is not HTTPS (e.g. IP:port access)
+    secure: process.env.NODE_ENV === "production" &&
+      (process.env.NEXT_PUBLIC_APP_URL ?? "").startsWith("https"),
     maxAge: 60 * 60 * 24 * 7, // 7 days
   },
 };
