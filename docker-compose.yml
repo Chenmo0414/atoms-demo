@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: atoms-demo:latest
     ports:
       - "13000:3000"
     environment:
