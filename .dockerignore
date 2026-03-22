@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env*.local
+*.log
+logs/
+atoms-deploy.tar.gz
+atoms-demo.tar.gz
+README*.md
