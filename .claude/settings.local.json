@@ -1,0 +1,68 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(pnpm *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git checkout -- *)",
+      "Bash(rg *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(cat *)",
+      "WebFetch(domain:atoms.dev)",
+      "WebFetch(domain:help.atoms.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:npmjs.com)",
+      "WebFetch(domain:registry.npmjs.org)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(rm -rf *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/credentials*.json)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": [
+      "git",
+      "docker"
+    ],
+    "filesystem": {
+      "allowWrite": [
+        "./"
+      ],
+      "denyRead": [
+        "./.env",
+        "./.env.local",
+        "./secrets"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "atoms.dev",
+        "help.atoms.dev",
+        "github.com",
+        "raw.githubusercontent.com",
+        "npmjs.com",
+        "registry.npmjs.org",
+        "*.vercel.com",
+        "*.supabase.co"
+      ],
+      "allowLocalBinding": true
+    }
+  }
+}
