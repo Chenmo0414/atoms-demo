@@ -93,7 +93,135 @@ pnpm dev
 
 ---
 
-## 生产部署（PM2 + Nginx）
+## 生产部署（Docker + GitHub Actions CI/CD）
+
+项目已内置 Docker 镜像构建和 GitHub Actions 自动部署流水线，推送到 `main` 分支即可触发自动构建和部署。
+
+### 架构概览
+
+```
+开发者 git push main
+       ↓
+GitHub Actions
+  1. 构建 Docker 镜像（node:24-slim + Prisma debian-openssl-3.0.x）
+  2. 压缩为 tar.gz
+  3. SCP 上传到服务器
+  4. SSH 连接服务器：docker load → docker compose up -d
+       ↓
+服务器运行 atoms-demo:latest 容器
+```
+
+### 前置条件
+
+- 一台 Linux 服务器（已安装 Docker + Docker Compose）
+- GitHub 仓库 Secrets 已配置（见下方）
+
+### 1. 配置 GitHub Secrets
+
+在仓库 → Settings → Secrets and variables → Actions 中添加：
+
+| Secret 名称 | 说明 |
+|---|---|
+| `SERVER_HOST` | 服务器 IP 或域名 |
+| `SERVER_USER` | SSH 登录用户名（如 `root`） |
+| `SERVER_SSH_KEY` | SSH 私钥（`cat ~/.ssh/id_rsa`） |
+
+### 2. 服务器准备
+
+```bash
+# 创建部署目录
+mkdir -p /deploy/atoms
+
+# 在 /deploy/atoms/ 创建 .env 文件（参考 .env.example）
+cat > /deploy/atoms/.env << 'EOF'
+DATABASE_URL="postgresql://user:password@host:5432/atoms?schema=public"
+SESSION_SECRET="your-32-char-random-secret"
+AI_PROVIDER="bailian"
+AI_MODEL="qwen3.5-plus"
+DASHSCOPE_API_KEY="sk-xxx"
+DASHSCOPE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+NEXT_PUBLIC_APP_URL="https://your-domain.com"
+EOF
+```
+
+### 3. 推送代码触发部署
+
+```bash
+git push origin main
+# GitHub Actions 自动构建并部署，约 3-5 分钟
+```
+
+### 手动部署（首次或调试）
+
+如果需要在服务器上手动操作：
+
+```bash
+cd /deploy/atoms
+
+# 加载 CI 上传的镜像
+docker load < atoms-demo-image.tar.gz
+
+# 启动容器
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+```
+
+### 端口映射
+
+容器默认将 `3000` 映射到宿主机 `13000`，可在 `docker-compose.yml` 中修改。
+
+### Nginx 反向代理（可选）
+
+如需绑定域名，在服务器配置 Nginx：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://localhost:13000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        # 流式生成必须关闭缓冲，否则 SSE 不会实时推送
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+> **关键配置：** `proxy_buffering off` 是必须项。不配置此项，服务端 SSE 流会被 Nginx 缓冲，生成过程中预览区不会实时更新。
+
+---
+
+## 本地 Docker 运行
+
+也可以在本地用 Docker 运行，跳过 Node.js 环境配置：
+
+```bash
+# 构建镜像
+docker build -t atoms-demo:latest .
+
+# 复制并编辑环境变量
+cp .env.example .env
+# 编辑 .env ...
+
+# 启动
+docker compose up -d
+```
+
+访问 [http://localhost:13000](http://localhost:13000)。
+
+---
+
+## 生产部署（PM2 + Nginx，不使用 Docker）
+
+如果不想用 Docker，也可以直接在服务器上运行：
 
 ### 构建
 

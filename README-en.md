@@ -93,7 +93,133 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Production Deployment (PM2 + Nginx)
+## Production Deployment (Docker + GitHub Actions CI/CD)
+
+The project ships with a Docker image build pipeline and GitHub Actions workflow. Push to `main` and deployment happens automatically.
+
+### Architecture
+
+```
+Developer git push main
+       ↓
+GitHub Actions
+  1. Build Docker image (node:24-slim + Prisma debian-openssl-3.0.x)
+  2. Compress to tar.gz
+  3. SCP upload to server
+  4. SSH: docker load → docker compose up -d
+       ↓
+Server runs atoms-demo:latest container
+```
+
+### Prerequisites
+
+- A Linux server with Docker + Docker Compose installed
+- GitHub repository Secrets configured (see below)
+
+### 1. Configure GitHub Secrets
+
+Go to repository → Settings → Secrets and variables → Actions, and add:
+
+| Secret | Description |
+|---|---|
+| `SERVER_HOST` | Server IP or domain |
+| `SERVER_USER` | SSH user (e.g. `root`) |
+| `SERVER_SSH_KEY` | SSH private key (`cat ~/.ssh/id_rsa`) |
+
+### 2. Prepare the server
+
+```bash
+# Create deployment directory
+mkdir -p /deploy/atoms
+
+# Create .env file (see .env.example for all options)
+cat > /deploy/atoms/.env << 'EOF'
+DATABASE_URL="postgresql://user:password@host:5432/atoms?schema=public"
+SESSION_SECRET="your-32-char-random-secret"
+AI_PROVIDER="bailian"
+AI_MODEL="qwen3.5-plus"
+DASHSCOPE_API_KEY="sk-xxx"
+DASHSCOPE_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+NEXT_PUBLIC_APP_URL="https://your-domain.com"
+EOF
+```
+
+### 3. Push to trigger deployment
+
+```bash
+git push origin main
+# GitHub Actions builds and deploys automatically (~3-5 minutes)
+```
+
+### Manual deployment (first time or debugging)
+
+```bash
+cd /deploy/atoms
+
+# Load the image uploaded by CI
+docker load < atoms-demo-image.tar.gz
+
+# Start the container
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+### Port mapping
+
+The container maps internal port `3000` to host port `13000` by default. Adjust in `docker-compose.yml` as needed.
+
+### Nginx reverse proxy (optional)
+
+To bind a domain name, configure Nginx on the server:
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://localhost:13000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        # Required for SSE streaming
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+> **Note:** `proxy_buffering off` is critical — without it, SSE streaming will be buffered by Nginx and the real-time preview won't work.
+
+---
+
+## Local Docker Run
+
+To run locally with Docker (no Node.js setup required):
+
+```bash
+# Build the image
+docker build -t atoms-demo:latest .
+
+# Copy and edit environment variables
+cp .env.example .env
+# Edit .env ...
+
+# Start
+docker compose up -d
+```
+
+Open [http://localhost:13000](http://localhost:13000).
+
+---
+
+## Production Deployment (PM2 + Nginx, without Docker)
+
+If you prefer running directly on the server without Docker:
 
 ### Build
 
